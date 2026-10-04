@@ -55,6 +55,8 @@ class VideoPreviewMaker(tk.Tk):
         self.preview_photo: Optional[ImageTk.PhotoImage] = None
         self.worker_thread: Optional[threading.Thread] = None
         self.zoom_level: float = 1.0
+        self.last_used_count: int = 0
+        self.last_scale_pct: float = 100.0
 
         self._build_layout()
 
@@ -155,6 +157,13 @@ class VideoPreviewMaker(tk.Tk):
 
         self.save_btn = ttk.Button(action_frame, text="Save Image...", command=self._on_save, state="disabled")
         self.save_btn.pack(fill="x", pady=(6, 0))
+
+        self.preview_subfolder_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            action_frame,
+            text="Save into 'preview' subfolder next to video",
+            variable=self.preview_subfolder_var,
+        ).pack(fill="x", pady=(4, 0))
 
         self.progress = ttk.Progressbar(parent, mode="determinate")
         self.progress.pack(fill="x", pady=(0, 6))
@@ -320,6 +329,8 @@ class VideoPreviewMaker(tk.Tk):
 
     def _on_generate_done(self, grid_img, used_count, settings):
         self.grid_image = grid_img
+        self.last_used_count = used_count
+        self.last_scale_pct = settings["scale_pct"]
         self._zoom_fit()
 
         size_kb = self._estimate_jpeg_size_kb(grid_img)
@@ -574,12 +585,34 @@ class VideoPreviewMaker(tk.Tk):
             factor = self.ZOOM_STEP
         self._zoom_at(self.zoom_level * factor, event.x, event.y)
 
+    def _default_save_location(self) -> tuple[str, str]:
+        """Return (initial_dir, initial_filename) for the save dialog, based on
+        the source video's location/name and the last generated preview."""
+        video_dir = os.path.dirname(self.video_info.path)
+        stem = os.path.splitext(os.path.basename(self.video_info.path))[0]
+
+        target_dir = os.path.join(video_dir, "preview") if self.preview_subfolder_var.get() else video_dir
+
+        compression_pct = int(round(self.last_scale_pct))
+        filename = f"{stem}-prv-{self.last_used_count}-{compression_pct}.jpg"
+        return target_dir, filename
+
     def _on_save(self):
         if self.grid_image is None:
             return
+
+        initial_dir, initial_file = self._default_save_location()
+        if self.preview_subfolder_var.get():
+            try:
+                os.makedirs(initial_dir, exist_ok=True)
+            except OSError:
+                initial_dir = os.path.dirname(self.video_info.path)
+
         path = filedialog.asksaveasfilename(
             title="Save preview image",
             defaultextension=".jpg",
+            initialdir=initial_dir,
+            initialfile=initial_file,
             filetypes=[("JPEG image", "*.jpg"), ("PNG image", "*.png")],
         )
         if not path:
